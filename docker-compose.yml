@@ -6,6 +6,8 @@ services:
     depends_on:
       - mongo_server
       - nats_server
+    networks:
+      - network_geosmartsystem
   mongo_server:
     image: mongo:7.0.6
     restart: always
@@ -15,6 +17,8 @@ services:
     # environment:
     #   MONGO_INITDB_ROOT_USERNAME: root
     #   MONGO_INITDB_ROOT_PASSWORD: example
+    networks:
+      - network_geosmartsystem
   mongo-express:
     image: mongo-express
     restart: always
@@ -24,6 +28,8 @@ services:
       # ME_CONFIG_MONGODB_ADMINUSERNAME: root
       # ME_CONFIG_MONGODB_ADMINPASSWORD: example
       ME_CONFIG_MONGODB_URL: mongodb://mongo_server:27017/
+    networks:
+      - network_geosmartsystem
   nats_server:
     image: nats:latest
     container_name: nats_server
@@ -31,3 +37,8 @@ services:
       - 4222:4222
       - 6222:6222
       - 8222:8222
+    networks:
+      - network_geosmartsystem
+networks:
+  network_geosmartsystem:
+    external: true

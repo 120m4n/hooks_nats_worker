@@ -15,7 +15,7 @@ import (
 
 func main() {
 	// Connect to NATS server
-	url := "nats://localhost:4222"
+	url := "nats://nats_server:4222"
 	nc, err := nats.Connect(url)
 	if err != nil {
 		log.Fatalf("Error connecting to NATS: %v", err)
@@ -23,7 +23,7 @@ func main() {
 	defer nc.Close()
 
 	// Connect to MongoDB
-	clientOptions := options.Client().ApplyURI("mongodb://localhost:27017")
+	clientOptions := options.Client().ApplyURI("mongodb://mongo_server:27017")
 	mongoClient, err := mongo.Connect(context.Background(), clientOptions)
 	if err != nil {
 		log.Fatalf("Error connecting to MongoDB: %v", err)

@@ -1,0 +1,4 @@
+docker build --pull --rm -f Dockerfile -t electrosoftware/geo_worker:latest .
+
+docker push electrosoftware/geo_worker:latest
+docker pull electrosoftware/geo_worker:latest
