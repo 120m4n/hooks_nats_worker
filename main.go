@@ -8,22 +8,26 @@ import (
 
 	"github.com/nats-io/nats.go"
 	// "go.mongodb.org/mongo-driver/bson"
+	"github.com/120m4n/mongo_nats/config"
 	"github.com/120m4n/mongo_nats/model"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
 func main() {
+	// Load configuration
+	cfg := config.LoadConfig()
+
 	// Connect to NATS server
-	url := "nats://nats_server:4222"
-	nc, err := nats.Connect(url)
+
+	nc, err := nats.Connect(cfg.NatsURL)
 	if err != nil {
 		log.Fatalf("Error connecting to NATS: %v", err)
 	}
 	defer nc.Close()
 
 	// Connect to MongoDB
-	clientOptions := options.Client().ApplyURI("mongodb://mongo_server:27017")
+	clientOptions := options.Client().ApplyURI(cfg.MongoURI)
 	mongoClient, err := mongo.Connect(context.Background(), clientOptions)
 	if err != nil {
 		log.Fatalf("Error connecting to MongoDB: %v", err)
