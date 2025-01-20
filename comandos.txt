@@ -7,7 +7,8 @@ docker pull electrosoftware/coordinates_worker:latest
 docker network create --driver bridge --subnet 192.168.1.0/24 my-bridge-network
 
 docker compose -f docker-compose.yml up -d
-docker compose -f docker-compose-worker.yml up
+docker compose -f docker-compose-worker.yml up -d
+docker compose -f docker-compose-hooks.yml up -d
 
 --creacion de collection coordinates capped
 db.createCollection("coordinates", { capped : true, size : 5242880, max : 5000 } )
