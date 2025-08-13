@@ -3,13 +3,10 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"log"
 	"sync/atomic"
 	"time"
-
 	"github.com/nats-io/nats.go"
-	// "go.mongodb.org/mongo-driver/bson"
 	"errors"
 
 	"github.com/120m4n/mongo_nats/config"
