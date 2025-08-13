@@ -21,6 +21,13 @@ func main() {
 	// Load configuration
 	cfg := config.LoadConfig()
 
+	// mostrar las variables configuradas
+	fmt.Printf("Configuración cargada:\n")
+	fmt.Printf("NatsURL: %s\n", cfg.NatsURL)
+	fmt.Printf("MongoURI: %s\n", cfg.MongoURI)
+	fmt.Printf("DatabaseName: %s\n", cfg.DatabaseName)
+	fmt.Printf("Coor_CollectionName: %s\n", cfg.Coor_CollectionName)
+
 	// Connect to NATS server
 	nc, err := nats.Connect(cfg.NatsURL)
 	if err != nil {

@@ -2,3 +2,14 @@ docker build --pull --rm -f Dockerfile -t electrosoftware/geo_worker:latest .
 
 docker push electrosoftware/geo_worker:latest
 docker pull electrosoftware/geo_worker:latest
+
+go build -o mongo_nats_worker
+
+source .env
+./mongo_nats_worker
+
+Para arm64 (Apple Silicon, M1/M2):
+docker build --build-arg TARGETARCH=arm64 -t mongo_nats_worker:2.0-arm64 .
+
+Para amd64 (x86_64):
+docker build --build-arg TARGETARCH=amd64 -t mongo_nats_worker:2.0-amd64 .

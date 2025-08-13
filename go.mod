@@ -3,6 +3,7 @@ module github.com/120m4n/mongo_nats
 go 1.21.6
 
 require (
+	github.com/joho/godotenv v1.5.1
 	github.com/nats-io/nats.go v1.34.0
 	go.mongodb.org/mongo-driver v1.14.0
 )
