@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"sync/atomic"
 	"time"
 
 	"github.com/nats-io/nats.go"
@@ -17,16 +18,19 @@ import (
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
+// Contadores globales para estadísticas
+var (
+	processedCount   int64
+	errorCount       int64
+	validationErrors int64
+)
+
 func main() {
 	// Load configuration
 	cfg := config.LoadConfig()
 
-	// mostrar las variables configuradas
-	fmt.Printf("Configuración cargada:\n")
-	fmt.Printf("NatsURL: %s\n", cfg.NatsURL)
-	fmt.Printf("MongoURI: %s\n", cfg.MongoURI)
-	fmt.Printf("DatabaseName: %s\n", cfg.DatabaseName)
-	fmt.Printf("Coor_CollectionName: %s\n", cfg.Coor_CollectionName)
+	// Log inicial de configuración (solo al iniciar)
+	log.Printf("Worker iniciado - DB: %s, Collection: %s, Workers: 5", cfg.DatabaseName, cfg.Coor_CollectionName)
 
 	// Connect to NATS server
 	nc, err := nats.Connect(cfg.NatsURL)
@@ -52,6 +56,9 @@ func main() {
 	// Pool de workers
 	numWorkers := 5 // puedes ajustar este valor
 	startWorkerPool(numWorkers, docsChan, collection)
+
+	// Iniciar reporte de estadísticas cada 30 segundos
+	go startStatsReporter()
 
 	// Subscribe to "coordinates" topic
 	if err := subscribeCoordinates(nc, docsChan); err != nil {
@@ -79,9 +86,26 @@ func processDocument(id int, doc model.Document, collection *mongo.Collection) {
 	defer cancel()
 	_, err := collection.InsertOne(ctx, doc)
 	if err != nil {
+		atomic.AddInt64(&errorCount, 1)
 		log.Printf("Worker %d: Error inserting into MongoDB: %v", id, err)
 	} else {
-		fmt.Printf("Worker %d: Inserted document: %+v\n", id, doc)
+		atomic.AddInt64(&processedCount, 1)
+	}
+	// Removido el log de éxito para mejorar rendimiento
+}
+
+// startStatsReporter reporta estadísticas cada 30 segundos
+func startStatsReporter() {
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+	
+	for range ticker.C {
+		processed := atomic.LoadInt64(&processedCount)
+		errors := atomic.LoadInt64(&errorCount)
+		validationErrs := atomic.LoadInt64(&validationErrors)
+		
+		log.Printf("Stats - Procesados: %d, Errores DB: %d, Errores validación: %d", 
+			processed, errors, validationErrs)
 	}
 }
 
@@ -95,7 +119,8 @@ func subscribeCoordinates(nc *nats.Conn, docsChan chan<- model.Document) error {
 		}
 		// Validar el documento antes de enviarlo al canal
 		if err := validateDocument(doc); err != nil {
-			log.Printf("Documento inválido: %v. Datos: %+v", err, doc)
+			atomic.AddInt64(&validationErrors, 1)
+			// Solo loguear errores de validación críticos ocasionalmente
 			return
 		}
 		// Enviar el documento al canal para procesamiento concurrente
