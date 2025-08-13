@@ -6,8 +6,7 @@ WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-ARG TARGETARCH=amd64
-RUN CGO_ENABLED=0 GOARCH=$TARGETARCH go build -o /bin/server .
+RUN CGO_ENABLED=0  go build -o /bin/server .
 
 # Start from scratch
 FROM scratch AS final
