@@ -20,9 +20,11 @@ import (
 
 // Contadores globales para estadísticas
 var (
-	processedCount   int64
-	errorCount       int64
-	validationErrors int64
+    processedCount   int64
+    errorCount       int64
+    validationErrors int64
+    cacheHits        int64
+    cacheMisses      int64
 )
 
 func main() {
@@ -56,7 +58,7 @@ func main() {
 	// Pool de workers
 	numWorkers := 5 // puedes ajustar este valor
 	cache := internal.NewCacheManager()
-	startWorkerPool(numWorkers, docsChan, collection, cache)
+	startWorkerPool(numWorkers, docsChan, collection, cache, cfg.DistanceThreshold)
 
 	// Iniciar reporte de estadísticas cada 30 segundos
 	go startStatsReporter()
@@ -71,18 +73,18 @@ func main() {
 }
 
 // startWorkerPool launches a pool of workers to process documents
-func startWorkerPool(numWorkers int, docsChan <-chan model.Document, collection *mongo.Collection, cache *internal.CacheManager) {
+func startWorkerPool(numWorkers int, docsChan <-chan model.Document, collection *mongo.Collection, cache *internal.CacheManager, threshold float64) {
     for i := 0; i < numWorkers; i++ {
         go func(id int) {
             for doc := range docsChan {
-                processDocument(id, doc, collection, cache)
+                processDocument(id, doc, collection, cache, threshold)
             }
         }(i)
     }
 }
 
 // processDocument handles the insertion of a document into MongoDB
-func processDocument(id int, doc model.Document, collection *mongo.Collection, cache *internal.CacheManager) {
+func processDocument(id int, doc model.Document, collection *mongo.Collection, cache *internal.CacheManager, threshold float64) {
     ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
     defer cancel()
 
@@ -92,12 +94,15 @@ func processDocument(id int, doc model.Document, collection *mongo.Collection, c
 
     // Lógica de cache y proximidad
     if prevLoc, exists := cache.Get(uniqueId); exists {
+		atomic.AddInt64(&cacheHits, 1)
         dist := haversineDistance(prevLoc.Coordinates[0], prevLoc.Coordinates[1], newLoc.Coordinates[0], newLoc.Coordinates[1])
-        if dist <= 5.0 {
-            // Si la distancia es menor o igual a 5m, no persistir ni actualizar cache
+        if dist <= threshold {
+            // Si la distancia es menor o igual al umbral, no persistir ni actualizar cache
             return
         }
-    }
+    } else {
+		atomic.AddInt64(&cacheMisses, 1)
+	}
 
     // Persistir en MongoDB
     _, err := collection.InsertOne(ctx, doc)
@@ -120,9 +125,10 @@ func startStatsReporter() {
 		processed := atomic.LoadInt64(&processedCount)
 		errors := atomic.LoadInt64(&errorCount)
 		validationErrs := atomic.LoadInt64(&validationErrors)
-		
-		log.Printf("Stats - Procesados: %d, Errores DB: %d, Errores validación: %d", 
-			processed, errors, validationErrs)
+		hits := atomic.LoadInt64(&cacheHits)
+		misses := atomic.LoadInt64(&cacheMisses)
+        log.Printf("Stats - Procesados: %d, Errores DB: %d, Errores validación: %d, Cache hits: %d, Cache misses: %d", 
+            processed, errors, validationErrs, hits, misses)
 	}
 }
 
