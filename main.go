@@ -118,7 +118,7 @@ func processDocument(id int, doc model.Document, collection *mongo.Collection, c
 
 // startStatsReporter reporta estadísticas cada 30 segundos
 func startStatsReporter() {
-	ticker := time.NewTicker(30 * time.Second)
+	ticker := time.NewTicker(120 * time.Second)
 	defer ticker.Stop()
 	
 	for range ticker.C {
@@ -127,8 +127,15 @@ func startStatsReporter() {
 		validationErrs := atomic.LoadInt64(&validationErrors)
 		hits := atomic.LoadInt64(&cacheHits)
 		misses := atomic.LoadInt64(&cacheMisses)
-        log.Printf("Stats - Procesados: %d, Errores DB: %d, Errores validación: %d, Cache hits: %d, Cache misses: %d", 
-            processed, errors, validationErrs, hits, misses)
+		log.Printf("Stats - Procesados: %d, Errores DB: %d, Errores validación: %d, Cache hits: %d, Cache misses: %d", 
+			processed, errors, validationErrs, hits, misses)
+
+		// Reset de contadores para evitar crecimiento indefinido
+		atomic.StoreInt64(&processedCount, 0)
+		atomic.StoreInt64(&errorCount, 0)
+		atomic.StoreInt64(&validationErrors, 0)
+		atomic.StoreInt64(&cacheHits, 0)
+		atomic.StoreInt64(&cacheMisses, 0)
 	}
 }
 
