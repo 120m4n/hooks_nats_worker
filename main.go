@@ -81,6 +81,10 @@ func startWorkerPool(numWorkers int, docsChan <-chan model.Document, collection 
 func processDocument(id int, doc model.Document, collection *mongo.Collection) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
+
+	// Asignar campo Fecha usando LastModified
+    doc.Fecha = time.Unix(doc.LastModified, 0).UTC()
+
 	_, err := collection.InsertOne(ctx, doc)
 	if err != nil {
 		atomic.AddInt64(&errorCount, 1)
