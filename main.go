@@ -13,6 +13,9 @@ import (
 	"github.com/120m4n/mongo_nats/model"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
+
+	"math"
+    "github.com/120m4n/mongo_nats/internal"
 )
 
 // Contadores globales para estadísticas
@@ -52,7 +55,8 @@ func main() {
 
 	// Pool de workers
 	numWorkers := 5 // puedes ajustar este valor
-	startWorkerPool(numWorkers, docsChan, collection)
+	cache := internal.NewCacheManager()
+	startWorkerPool(numWorkers, docsChan, collection, cache)
 
 	// Iniciar reporte de estadísticas cada 30 segundos
 	go startStatsReporter()
@@ -67,32 +71,44 @@ func main() {
 }
 
 // startWorkerPool launches a pool of workers to process documents
-func startWorkerPool(numWorkers int, docsChan <-chan model.Document, collection *mongo.Collection) {
-	for i := 0; i < numWorkers; i++ {
-		go func(id int) {
-			for doc := range docsChan {
-				processDocument(id, doc, collection)
-			}
-		}(i)
-	}
+func startWorkerPool(numWorkers int, docsChan <-chan model.Document, collection *mongo.Collection, cache *internal.CacheManager) {
+    for i := 0; i < numWorkers; i++ {
+        go func(id int) {
+            for doc := range docsChan {
+                processDocument(id, doc, collection, cache)
+            }
+        }(i)
+    }
 }
 
 // processDocument handles the insertion of a document into MongoDB
-func processDocument(id int, doc model.Document, collection *mongo.Collection) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
+func processDocument(id int, doc model.Document, collection *mongo.Collection, cache *internal.CacheManager) {
+    ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+    defer cancel()
 
-	// Asignar campo Fecha usando LastModified
     doc.Fecha = time.Unix(doc.LastModified, 0).UTC()
+    uniqueId := doc.UniqueId
+    newLoc := doc.Location
 
-	_, err := collection.InsertOne(ctx, doc)
-	if err != nil {
-		atomic.AddInt64(&errorCount, 1)
-		log.Printf("Worker %d: Error inserting into MongoDB: %v", id, err)
-	} else {
-		atomic.AddInt64(&processedCount, 1)
-	}
-	// Removido el log de éxito para mejorar rendimiento
+    // Lógica de cache y proximidad
+    if prevLoc, exists := cache.Get(uniqueId); exists {
+        dist := haversineDistance(prevLoc.Coordinates[0], prevLoc.Coordinates[1], newLoc.Coordinates[0], newLoc.Coordinates[1])
+        if dist <= 5.0 {
+            // Si la distancia es menor o igual a 5m, no persistir ni actualizar cache
+            return
+        }
+    }
+
+    // Persistir en MongoDB
+    _, err := collection.InsertOne(ctx, doc)
+    if err != nil {
+        atomic.AddInt64(&errorCount, 1)
+        log.Printf("Worker %d: Error inserting into MongoDB: %v", id, err)
+    } else {
+        atomic.AddInt64(&processedCount, 1)
+        // Actualizar cache con nueva ubicación
+        cache.Set(uniqueId, newLoc)
+    }
 }
 
 // startStatsReporter reporta estadísticas cada 30 segundos
@@ -149,4 +165,17 @@ func validateDocument(doc model.Document) error {
 	}
 	// Puedes agregar más validaciones según tu modelo
 	return nil
+}
+
+// haversineDistance calcula la distancia en metros entre dos puntos geográficos
+func haversineDistance(lat1, lon1, lat2, lon2 float64) float64 {
+    const R = 6371000 // Radio de la Tierra en metros
+    latRad1 := lat1 * math.Pi / 180
+    latRad2 := lat2 * math.Pi / 180
+    dLat := (lat2 - lat1) * math.Pi / 180
+    dLon := (lon2 - lon1) * math.Pi / 180
+
+    a := math.Sin(dLat/2)*math.Sin(dLat/2) + math.Cos(latRad1)*math.Cos(latRad2)*math.Sin(dLon/2)*math.Sin(dLon/2)
+    c := 2 * math.Atan2(math.Sqrt(a), math.Sqrt(1-a))
+    return R * c
 }
