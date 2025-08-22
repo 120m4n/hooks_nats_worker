@@ -9,7 +9,13 @@
             "type": "go",
             "request": "launch",
             "mode": "debug",
-            "program": "${cwd}/main.go"
+            "program": "${cwd}/main.go",
+            "env": {
+                "NATS_URL": "nats://172.105.148.69:4222",
+                "MONGO_URI": "mongodb://root:punctuate-collie-student-emblaze@172.105.148.69:27017",
+                "DATABASE_NAME": "test",
+                "HOOK_COLLECTION_NAME": "hooks"
+            }
         }
     ]
 }

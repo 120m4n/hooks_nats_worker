@@ -6,25 +6,19 @@ import (
 	"log"
 	"sync/atomic"
 	"time"
+
 	"github.com/nats-io/nats.go"
-	"errors"
 
 	"github.com/120m4n/mongo_nats/config"
-	"github.com/120m4n/mongo_nats/model"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
-
-	"math"
-    "github.com/120m4n/mongo_nats/internal"
 )
 
 // Contadores globales para estadísticas
 var (
-    processedCount   int64
-    errorCount       int64
-    validationErrors int64
-    cacheHits        int64
-    cacheMisses      int64
+	processedCount   int64
+	errorCount       int64
+	validationErrors int64
 )
 
 func main() {
@@ -32,7 +26,7 @@ func main() {
 	cfg := config.LoadConfig()
 
 	// Log inicial de configuración (solo al iniciar)
-	log.Printf("Worker iniciado - DB: %s, Collection: %s, Workers: 5", cfg.DatabaseName, cfg.Coor_CollectionName)
+	log.Printf("Worker iniciado - DB: %s, Collection: %s, Workers: 5", cfg.DatabaseName, cfg.HookCollectionName)
 
 	// Connect to NATS server
 	nc, err := nats.Connect(cfg.NatsURL)
@@ -41,7 +35,6 @@ func main() {
 	}
 	defer nc.Close()
 
-	// Connect to MongoDB
 	clientOptions := options.Client().ApplyURI(cfg.MongoURI)
 	mongoClient, err := mongo.Connect(context.Background(), clientOptions)
 	if err != nil {
@@ -50,21 +43,21 @@ func main() {
 	defer mongoClient.Disconnect(context.Background())
 
 	// Get a handle for your collection usando configuración
-	collection := mongoClient.Database(cfg.DatabaseName).Collection(cfg.Coor_CollectionName)
+	collection := mongoClient.Database(cfg.DatabaseName).Collection(cfg.HookCollectionName)
 
 	// Canal para documentos recibidos
-	docsChan := make(chan model.Document, 100) // buffer configurable
+	// ...eliminado canal docsChan obsoleto...
 
 	// Pool de workers
-	numWorkers := 5 // puedes ajustar este valor
-	cache := internal.NewCacheManager()
-	startWorkerPool(numWorkers, docsChan, collection, cache, cfg.DistanceThreshold)
+	numWorkers := 5                                    // puedes ajustar este valor
+	hookChan := make(chan map[string]interface{}, 100) // buffer configurable
+	startHookWorkerPool(numWorkers, hookChan, collection)
 
-	// Iniciar reporte de estadísticas cada 30 segundos
+	// Iniciar reporte de estadísticas cada 120 segundos
 	go startStatsReporter()
 
-	// Subscribe to "coordinates" topic
-	if err := subscribeCoordinates(nc, docsChan); err != nil {
+	// Subscribe to "hooks" topic
+	if err := subscribeHooks(nc, hookChan); err != nil {
 		log.Fatalf("Error subscribing to topic: %v", err)
 	}
 
@@ -72,123 +65,66 @@ func main() {
 	select {}
 }
 
-// startWorkerPool launches a pool of workers to process documents
-func startWorkerPool(numWorkers int, docsChan <-chan model.Document, collection *mongo.Collection, cache *internal.CacheManager, threshold float64) {
-    for i := 0; i < numWorkers; i++ {
-        go func(id int) {
-            for doc := range docsChan {
-                processDocument(id, doc, collection, cache, threshold)
-            }
-        }(i)
-    }
+// startHookWorkerPool launches a pool of workers to process generic hook events
+func startHookWorkerPool(numWorkers int, hookChan <-chan map[string]interface{}, collection *mongo.Collection) {
+	for i := 0; i < numWorkers; i++ {
+		go func(id int) {
+			for event := range hookChan {
+				processHookEvent(id, event, collection)
+			}
+		}(i)
+	}
 }
 
-// processDocument handles the insertion of a document into MongoDB
-func processDocument(id int, doc model.Document, collection *mongo.Collection, cache *internal.CacheManager, threshold float64) {
-    ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-    defer cancel()
+// processHookEvent handles the insertion of a generic hook event into MongoDB
+func processHookEvent(id int, event map[string]interface{}, collection *mongo.Collection) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
 
-    doc.Fecha = time.Unix(doc.LastModified, 0).UTC()
-    uniqueId := doc.UniqueId
-    newLoc := doc.Location
-
-    // Lógica de cache y proximidad
-    if prevLoc, exists := cache.Get(uniqueId); exists {
-		atomic.AddInt64(&cacheHits, 1)
-        dist := haversineDistance(prevLoc.Coordinates[0], prevLoc.Coordinates[1], newLoc.Coordinates[0], newLoc.Coordinates[1])
-        if dist <= threshold {
-            // Si la distancia es menor o igual al umbral, no persistir ni actualizar cache
-            return
-        }
-    } else {
-		atomic.AddInt64(&cacheMisses, 1)
+	_, err := collection.InsertOne(ctx, event)
+	if err != nil {
+		atomic.AddInt64(&errorCount, 1)
+		log.Printf("Worker %d: Error inserting hook event into MongoDB: %v", id, err)
+	} else {
+		atomic.AddInt64(&processedCount, 1)
 	}
-
-    // Persistir en MongoDB
-    _, err := collection.InsertOne(ctx, doc)
-    if err != nil {
-        atomic.AddInt64(&errorCount, 1)
-        log.Printf("Worker %d: Error inserting into MongoDB: %v", id, err)
-    } else {
-        atomic.AddInt64(&processedCount, 1)
-        // Actualizar cache con nueva ubicación
-        cache.Set(uniqueId, newLoc)
-    }
 }
 
 // startStatsReporter reporta estadísticas cada 30 segundos
 func startStatsReporter() {
 	ticker := time.NewTicker(120 * time.Second)
 	defer ticker.Stop()
-	
+
 	for range ticker.C {
 		processed := atomic.LoadInt64(&processedCount)
 		errors := atomic.LoadInt64(&errorCount)
 		validationErrs := atomic.LoadInt64(&validationErrors)
-		hits := atomic.LoadInt64(&cacheHits)
-		misses := atomic.LoadInt64(&cacheMisses)
-		log.Printf("Stats - Procesados: %d, Errores DB: %d, Errores validación: %d, Cache hits: %d, Cache misses: %d", 
-			processed, errors, validationErrs, hits, misses)
+		log.Printf("Stats - Procesados: %d, Errores DB: %d, Errores validación: %d",
+			processed, errors, validationErrs)
 
 		// Reset de contadores para evitar crecimiento indefinido
 		atomic.StoreInt64(&processedCount, 0)
 		atomic.StoreInt64(&errorCount, 0)
 		atomic.StoreInt64(&validationErrors, 0)
-		atomic.StoreInt64(&cacheHits, 0)
-		atomic.StoreInt64(&cacheMisses, 0)
 	}
 }
 
-// subscribeCoordinates subscribes to the "coordinates" topic and sends valid documents to docsChan
-func subscribeCoordinates(nc *nats.Conn, docsChan chan<- model.Document) error {
-	_, err := nc.Subscribe("coordinates", func(m *nats.Msg) {
-		var doc model.Document
-		if err := json.Unmarshal(m.Data, &doc); err != nil {
-			log.Printf("Error unmarshalling data: %v", err)
+// subscribeHooks subscribes to the "hooks" topic and sends valid events to hookChan
+func subscribeHooks(nc *nats.Conn, hookChan chan<- map[string]interface{}) error {
+	_, err := nc.Subscribe("hooks", func(m *nats.Msg) {
+		var event map[string]interface{}
+		if err := json.Unmarshal(m.Data, &event); err != nil {
+			log.Printf("Error unmarshalling hook event: %v", err)
 			return
 		}
-		// Validar el documento antes de enviarlo al canal
-		if err := validateDocument(doc); err != nil {
+		// Validación mínima: debe tener metadata
+		if _, ok := event["metadata"]; !ok {
 			atomic.AddInt64(&validationErrors, 1)
-			// Solo loguear errores de validación críticos ocasionalmente
+			log.Printf("Evento sin metadata, descartado")
 			return
 		}
-		// Enviar el documento al canal para procesamiento concurrente
-		docsChan <- doc
+		// Enviar el evento al canal para procesamiento concurrente
+		hookChan <- event
 	})
 	return err
-}
-
-// validateDocument verifica los campos obligatorios y formato básico
-func validateDocument(doc model.Document) error {
-	if doc.UniqueId == "" {
-		return errors.New("UniqueId vacío")
-	}
-	if doc.UserId == "" {
-		return errors.New("UserId vacío")
-	}
-	if doc.Fleet == "" {
-		return errors.New("Fleet vacío")
-	}
-	if doc.Location.Type == "" {
-		return errors.New("Location.Type vacío")
-	}
-	if len(doc.Location.Coordinates) != 2 {
-		return errors.New("Location.Coordinates debe tener longitud 2 (lat,lon)")
-	}
-	// Puedes agregar más validaciones según tu modelo
-	return nil
-}
-
-// haversineDistance calcula la distancia en metros entre dos puntos geográficos
-func haversineDistance(lat1, lon1, lat2, lon2 float64) float64 {
-    const R = 6371000 // Radio de la Tierra en metros
-    latRad1 := lat1 * math.Pi / 180
-    latRad2 := lat2 * math.Pi / 180
-    dLat := (lat2 - lat1) * math.Pi / 180
-    dLon := (lon2 - lon1) * math.Pi / 180
-
-    a := math.Sin(dLat/2)*math.Sin(dLat/2) + math.Cos(latRad1)*math.Cos(latRad2)*math.Sin(dLon/2)*math.Sin(dLon/2)
-    c := 2 * math.Atan2(math.Sqrt(a), math.Sqrt(1-a))
-    return R * c
 }
